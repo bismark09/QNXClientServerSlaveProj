@@ -2,6 +2,8 @@
 
 ServerInternalDynamicData serverInternalDynamicData;
 
+static int uniqueID=1;
+
 /*------------------------------------------------------------------------------------*/
 //Timer for quantum
 static void sigusr1Handler(int signo,siginfo_t *info, void *other) {
@@ -35,6 +37,7 @@ int InformationToFile(ServerInternalStaticData *serverInternalData, ServerConfig
 		fprintf(filePointer, "SERVER_NODE_NAME: %s\n", serverInternalData->serverNodeName);
 		fprintf(filePointer, "SERVER_PID: %d\n", serverInternalData->servPid);
 		fprintf(filePointer, "CHID_FOR_CLIENT: %d\n", serverInternalData->chidClient);
+		fprintf(filePointer, "CHID_FOR_VIEWERS: %d\n", serverInternalData->chidViewer);
 		fclose(filePointer);
 		return 0;
 	}
@@ -129,9 +132,9 @@ int main(int argc, char *argv[]) {
 	serverInternalDynamicData.taskResultServerStructFirst= new TaskResultServerStruct;
 	serverInternalDynamicData.taskResultServerStructLastExistingEmpty= serverInternalDynamicData.taskResultServerStructFirst;
 
-	serverConfigs.numberOfSlaves=1;
-	serverConfigs.timeoutNanosec=5000000000;
-	serverConfigs.quantumNanosec=20000000000;
+	serverConfigs.numberOfSlaves=1LL;
+	serverConfigs.timeoutNanosec=5000000000LL;
+	serverConfigs.quantumNanosec=20000000000LL;
 	serverConfigs.maxTaskQueueSize=5;
 	strcpy(serverConfigs.severInfoFileName, "serv.serv");
 	//serverConfigs.timerExceededPeriod=250000;
@@ -196,7 +199,7 @@ int main(int argc, char *argv[]) {
 	timeDescriptorStruct.it_interval.tv_nsec = serverConfigs.quantumNanosec%1000000000LL;
 
 	//Set new type
-	timer_settime(timerDescriptor, NULL , &timeDescriptorStruct, NULL);
+	//timer_settime(timerDescriptor, NULL , &timeDescriptorStruct, NULL);
 
 
 
@@ -266,10 +269,16 @@ ReceivingTasksState:
 				return EXIT_FAILURE;
 			};
 			//Receiving tasks
-			recieveID=MsgReceive(serverInternalData.chidClient, &taskCommonStruct, sizeof(TaskCommonStruct), NULL);
+			recieveID=-10;
+			struct _msg_info  info;
+			recieveID=MsgReceive(serverInternalData.chidClient, &taskCommonStruct, sizeof(TaskCommonStruct), &info);
+			std::cout<<info.chid<<std::endl;
+			std::cout<<info.nd<<std::endl;
+			std::cout<<info.pid<<std::endl;
+
 			//Timeout checking
 			if (recieveID < 0 && errno==ETIMEDOUT) {
-				serverInternalDynamicData.quantEndedGivingTasksToSlaves=false;
+				//serverInternalDynamicData.quantEndedGivingTasksToSlaves=false;
 				goto GivingTasksToSlavesState;
 			}
 			//Timeout of another Timer
@@ -295,8 +304,10 @@ ReceivingTasksState:
 				}
 				/*Not too much - add task to queue*/
 				else{
-					taskCommonStruct.taskID=recieveID;
-					serverInternalDynamicData.serverTaskQueueStruct.insert(std::make_pair(recieveID, taskCommonStruct));
+					taskCommonStruct.clientID=recieveID;
+					taskCommonStruct.taskID=uniqueID;
+					serverInternalDynamicData.serverTaskQueueStruct.insert(std::make_pair(taskCommonStruct.taskID, taskCommonStruct));
+					uniqueID++;
 					goto ReceivingTasksState;
 				}
 			}
@@ -330,7 +341,9 @@ GivingTasksToSlavesState:
 				recieveID=MsgReceive(serverInternalData.chidSlaveTask, NULL, NULL, NULL);
 				//Timeout - no free Slaves - this is bad news....
 				if (recieveID<0 &&  errno== ETIMEDOUT) {
-					goto GivingTasksToSlavesState;
+					//goto GivingTasksToSlavesState;
+					serverInternalDynamicData.quantEndedGettingResultsFromSlaves=false;
+					goto GettingResultsFromSlaves;
 				}
 				//Timeout of another Timer
 				else if(recieveID < 0 && errno==EINTR){
@@ -345,6 +358,8 @@ GivingTasksToSlavesState:
 					serverInternalDynamicData.taskResultServerStructLastExistingEmpty->nextResultServerStruct->nextResultServerStruct=NULL;
 
 					serverInternalDynamicData.taskResultServerStructLastExistingEmpty->taskResultCommonStruct.taskResultCommonStructHeader.taskID=itr->first;
+					serverInternalDynamicData.taskResultServerStructLastExistingEmpty->taskResultCommonStruct.taskResultCommonStructHeader.clientID=itr->second.clientID;
+
 					serverInternalDynamicData.taskResultServerStructLastExistingEmpty->taskResultCommonStruct.taskResultCommonStructHeader.serverBusy=false;
 					serverInternalDynamicData.taskResultServerStructLastExistingEmpty->taskResultCommonStruct.taskResultCommonStructHeader.numberOfDotsCoordinates=(itr->second.numberOfNeededPoints);
 					serverInternalDynamicData.taskResultServerStructLastExistingEmpty->taskResultCommonStruct.taskResultCommonStructHeader.exceedsInNanosecds=itr->second.exceedsInNanosecds;
@@ -359,10 +374,11 @@ GivingTasksToSlavesState:
 
 
 					serverInternalDynamicData.serverTaskQueueStruct.erase(itr);
+					std::cout<<serverInternalDynamicData.serverTaskQueueStruct.size()<<std::endl;
 
-					MsgReply(recieveID, NULL,&(taskCommonStruct), sizeof(taskCommonStruct));
+					MsgReply(recieveID, NULL,&(itr->second), sizeof(TaskCommonStruct));
 
-					serverInternalDynamicData.taskResultServerStructLastExistingEmpty->nextResultServerStruct=serverInternalDynamicData.taskResultServerStructLastExistingEmpty->nextResultServerStruct->nextResultServerStruct;
+					serverInternalDynamicData.taskResultServerStructLastExistingEmpty=serverInternalDynamicData.taskResultServerStructLastExistingEmpty->nextResultServerStruct;
 
 					goto GivingTasksToSlavesState;
 				}
@@ -382,7 +398,7 @@ GivingTasksToSlavesState:
 
 GettingResultsFromSlaves:
 		if(serverInternalDynamicData.quantEndedGettingResultsFromSlaves==true){
-			serverInternalDynamicData.quantEndedViewer==false;
+			serverInternalDynamicData.quantEndedViewer=false;
 			goto GivingResultsToViewersState;
 		}
 		else{
@@ -402,7 +418,7 @@ GettingResultsFromSlaves:
 			recieveID=MsgReceive(serverInternalData.chidSlaveResult, &(taskResultCommonStructInSlave.taskResultCommonStruct.taskResultCommonStructHeader), sizeof(TaskResultCommonStructHeader), &info);
 			//Timeout
 			if (recieveID<0 &&  errno== ETIMEDOUT  ) {
-				serverInternalDynamicData.quantEndedViewer==false;
+				serverInternalDynamicData.quantEndedViewer=false;
 				goto GivingResultsToViewersState;
 			}
 			//Timeout of another Timer
@@ -428,12 +444,13 @@ GettingResultsFromSlaves:
 				MsgRead(recieveID,currentResultServerStructInServer->taskResultCommonStruct.taskResultPairOfDots,info.srcmsglen-sizeof(TaskResultCommonStructHeader),sizeof(TaskResultCommonStructHeader));
 
 
-				int a=10;
+				//int a=10;
 
-				MsgWrite(currentResultServerStructInServer->taskResultCommonStruct.taskResultCommonStructHeader.taskID, &(currentResultServerStructInServer->taskResultCommonStruct.taskResultCommonStructHeader), sizeof(TaskResultCommonStructHeader),0);
-				MsgWrite(currentResultServerStructInServer->taskResultCommonStruct.taskResultCommonStructHeader.taskID, currentResultServerStructInServer->taskResultCommonStruct.taskResultPairOfDots,sizeof(TaskResultPairOfDots)*currentResultServerStructInServer->taskResultCommonStruct.taskResultCommonStructHeader.numberOfDotsCoordinates,sizeof(TaskResultCommonStructHeader));
-				MsgReply(currentResultServerStructInServer->taskResultCommonStruct.taskResultCommonStructHeader.taskID, NULL, NULL,NULL);
-				//MsgReply(,NULL,&(currentResultServerStructInServer->taskResultCommonStruct),info.srcmsglen);
+				MsgWrite(currentResultServerStructInServer->taskResultCommonStruct.taskResultCommonStructHeader.clientID, &(currentResultServerStructInServer->taskResultCommonStruct.taskResultCommonStructHeader), sizeof(TaskResultCommonStructHeader),0);
+				MsgWrite(currentResultServerStructInServer->taskResultCommonStruct.taskResultCommonStructHeader.clientID, currentResultServerStructInServer->taskResultCommonStruct.taskResultPairOfDots,sizeof(TaskResultPairOfDots)*currentResultServerStructInServer->taskResultCommonStruct.taskResultCommonStructHeader.numberOfDotsCoordinates,sizeof(TaskResultCommonStructHeader));
+				MsgReply(currentResultServerStructInServer->taskResultCommonStruct.taskResultCommonStructHeader.clientID, NULL, NULL,NULL);
+
+				MsgReply(recieveID, NULL,NULL, NULL);
 				goto GettingResultsFromSlaves;
 			}
 		}
@@ -469,23 +486,60 @@ GivingResultsToViewersState:
 			}
 			//Not timeout
 			else{
-				goto GivingResultsToViewersState;
 				/*Find if this task has ever exist*/
 				ViewerResultCommonStruct viewerResultCommonStruct;
 
+				TaskResultServerStruct* currentResultServerStructInServer=serverInternalDynamicData.taskResultServerStructFirst;
+				/*Check if it is in queue*/
+				std::map  <int, TaskCommonStruct>::iterator itr=serverInternalDynamicData.serverTaskQueueStruct.find(viewerTaskInterest);
+				if(itr!=serverInternalDynamicData.serverTaskQueueStruct.end()){
+					viewerResultCommonStruct.viewerAnswerStatus=notReady;
+					MsgReply(recieveID, NULL,&viewerResultCommonStruct, sizeof(viewerResultCommonStruct));
+					goto GivingResultsToViewersState;
+				}
+
+				/*Check if it is done*/
+				while(currentResultServerStructInServer!=NULL){
+					if(currentResultServerStructInServer->taskResultCommonStruct.taskResultCommonStructHeader.taskID==viewerTaskInterest){
+
+							/*taskResultCommonStructInSlave.taskResultCommonStruct.taskResultCommonStructHeader.taskID*/
+						break;
+					}
+					currentResultServerStructInServer=currentResultServerStructInServer->nextResultServerStruct;
+				}
+
+
 				/*There is no such task - sorry...*/
-				/*if(serverResultsStructIterator==serverInternalDynamicData.serverResultsStruct.end()){
-					viewerResultCommonStruct.exist=false;
+				if(currentResultServerStructInServer==NULL){
+					viewerResultCommonStruct.viewerAnswerStatus=notExist;
 					MsgReply(recieveID, NULL,&viewerResultCommonStruct, sizeof(viewerResultCommonStruct));
 					goto GivingResultsToViewersState;
-				}*/
+				}
 				/*Oh, here it is!*/
-				/*else{
-					viewerResultCommonStruct.exist=true;
-					viewerResultCommonStruct.taskResultCommonStruct=serverResultsStructIterator->second;
-					MsgReply(recieveID, NULL,&viewerResultCommonStruct, sizeof(viewerResultCommonStruct));
+				else{
+					viewerResultCommonStruct.viewerAnswerStatus=Ok;
+				//	viewerResultCommonStruct.taskResultCommonStruct.taskResultCommonStructHeader=currentResultServerStructInServer->taskResultCommonStruct.taskResultCommonStructHeader;
+
+		//			viewerResultCommonStruct.taskResultCommonStruct.taskResultPairOfDots= new TaskResultPairOfDots[currentResultServerStructInServer->taskResultCommonStruct.taskResultCommonStructHeader.numberOfDotsCoordinates];
+
+	//				memcpy(viewerResultCommonStruct.taskResultCommonStruct.taskResultPairOfDots, currentResultServerStructInServer->taskResultCommonStruct.taskResultPairOfDots, currentResultServerStructInServer->taskResultCommonStruct.taskResultCommonStructHeader.numberOfDotsCoordinates*sizeof(TaskResultPairOfDots));
+
+//					viewerResultCommonStruct.taskResultCommonStruct.taskResultCommonStructHeader
+
+					//iov_t iov[3];
+
+					MsgWrite(recieveID, &viewerResultCommonStruct.viewerAnswerStatus, sizeof(ViewerAnswerStatus),0);
+					MsgWrite(recieveID, &(currentResultServerStructInServer->taskResultCommonStruct.taskResultCommonStructHeader), sizeof(TaskResultCommonStructHeader),sizeof(ViewerAnswerStatus));
+					MsgWrite(recieveID, currentResultServerStructInServer->taskResultCommonStruct.taskResultPairOfDots, sizeof(TaskResultPairOfDots)*currentResultServerStructInServer->taskResultCommonStruct.taskResultCommonStructHeader.numberOfDotsCoordinates, sizeof(ViewerAnswerStatus)+sizeof(TaskResultCommonStructHeader));
+
+					//delete[] viewerResultCommonStruct.taskResultCommonStruct.taskResultPairOfDots;
+
+					/*serverResultsStructIterator->second;*/
+					MsgReply(recieveID, NULL,NULL, NULL);
+					//MsgSendv(chidResults,iov,2, NULL,NULL);
+
 					goto GivingResultsToViewersState;
-				}*/
+				}
 			}
 		}
 	}

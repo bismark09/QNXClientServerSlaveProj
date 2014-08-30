@@ -15,7 +15,7 @@
 
 
 int main(int argc, char *argv[]) {
-	sleep(2); //Let server start and be prepared!
+	//sleep(2); //Let server start and be prepared!
 	FILE *fp;
 	fp=fopen("serv.serv", "r");
 
@@ -39,14 +39,14 @@ int main(int argc, char *argv[]) {
 	}
 
 	TaskCommonStruct taskStruct;
-	taskStruct.H=1;
+	taskStruct.H=0.5;
 	taskStruct.r=100;
 	taskStruct.startZ=0;
 	taskStruct.kvadrantX=+1;
 	taskStruct.kvadrantY=-1;
 	taskStruct.startX=0;
 	taskStruct.startY=100;
-	taskStruct.numberOfNeededPoints=5;
+	taskStruct.numberOfNeededPoints=4500;
 	//taskStruct.rcvid=-1;
 
 
@@ -79,7 +79,8 @@ int main(int argc, char *argv[]) {
 
 	delete[] taskResultStruct.taskResultPairOfDots;
 
-
+	ConnectDetach(coid);
+	//Attach(0, servPID, servCHID,	NULL, NULL)
 
 	return EXIT_SUCCESS;
 }
