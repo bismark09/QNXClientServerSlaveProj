@@ -8,7 +8,6 @@
 #include <stdio.h>  //For cout cerr and so on
 #include <errno.h>	//For errno
 #include <string.h>  //For strerror
-
 #include <iomanip>
 
 #include "../ServerPrj/includes/CommonStructs.hpp"
